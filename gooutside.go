@@ -39,7 +39,7 @@ func getCityTemperature(openweatherApiKey string, openweatherApi string, city st
 	openweatherUrl := "http://" + openweatherApi + "weather?q=" + city + "&units=metric&appid=" + openweatherApiKey
 	response, err := http.Get(openweatherUrl)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	defer response.Body.Close()
 
