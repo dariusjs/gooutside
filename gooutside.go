@@ -36,16 +36,16 @@ func getConfig() (string, string) {
 }
 
 func getCityTemperature(openweatherApiKey string, openweatherApi string, city string) CityWeather {
-	openweatherUrl := "http://" + openweatherApi + "weather?q=" + city + "&units=metric&appid=" + openweatherApiKey
+	openweatherUrl := openweatherApi + "/weather?q=" + city + "&units=metric&appid=" + openweatherApiKey
 	response, err := http.Get(openweatherUrl)
 	if err != nil {
-		panic(err)
+		log.Print(err)
 	}
 	defer response.Body.Close()
 
 	responseData, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
 	}
 
 	cityWeather := CityWeather{}
@@ -60,14 +60,14 @@ func postToInflux(cityWeather CityWeather, influxDbAddress string) {
 
 	response, err := http.Post(influxDbAddress, "application/octet-stream", bytes.NewBuffer([]byte(weatherData)))
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
 	}
 	fmt.Println(response)
 }
 
 func main() {
 	openweatherApiKey, influxDbAddress := getConfig()
-	openweatherApi := "api.openweathermap.org/data/2.5/"
+	openweatherApi := "http://api.openweathermap.org/data/2.5"
 	city := "Haarlem"
 
 	webserver := http.NewServeMux()
