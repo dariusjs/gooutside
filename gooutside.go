@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/cenkalti/backoff"
 )
 
 type CityWeather struct {
@@ -37,32 +39,51 @@ func getConfig() (string, string) {
 
 func getCityTemperature(openweatherApiKey string, openweatherApi string, city string) CityWeather {
 	openweatherUrl := openweatherApi + "/weather?q=" + city + "&units=metric&appid=" + openweatherApiKey
-	response, err := http.Get(openweatherUrl)
-	if err != nil {
-		log.Print(err)
-	}
-	defer response.Body.Close()
-
-	responseData, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		log.Print(err)
-	}
-
 	cityWeather := CityWeather{}
-	json.Unmarshal([]byte(responseData), &cityWeather)
-	cityWeather.Name = strings.ReplaceAll((cityWeather.Name), " ", "_")
+
+	err := backoff.Retry(func() error {
+		response, err := http.Get(openweatherUrl)
+		if err != nil {
+			log.Print(err)
+		}
+
+		responseData, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			log.Print(err)
+		}
+
+		json.Unmarshal([]byte(responseData), &cityWeather)
+		cityWeather.Name = strings.ReplaceAll((cityWeather.Name), " ", "_")
+
+		defer response.Body.Close()
+		return nil
+	}, backoff.NewExponentialBackOff())
+
+	if err != nil {
+		log.Fatal(err)
+	}
 	return cityWeather
 }
 
-func postToInflux(cityWeather CityWeather, influxDbAddress string) {
-	weatherData := "openweathermap," + "city=" + fmt.Sprint(cityWeather.Name) + " temperature=" + fmt.Sprint(cityWeather.Data.Temp) + ",pressure=" + fmt.Sprint(cityWeather.Data.Pressure) + ",humidity=" + fmt.Sprint(cityWeather.Data.Humidity)
-	fmt.Println(weatherData)
+func postToInflux(payload string, influxDbAddress string) {
+	err := backoff.Retry(func() error {
+		response, err := http.Post(influxDbAddress, "application/octet-stream", bytes.NewBuffer([]byte(payload)))
+		if err != nil {
+			return err
+		}
+		fmt.Println(response)
+		defer response.Body.Close()
+		return nil
+	}, backoff.NewExponentialBackOff())
 
-	response, err := http.Post(influxDbAddress, "application/octet-stream", bytes.NewBuffer([]byte(weatherData)))
 	if err != nil {
-		log.Print(err)
+		log.Fatal(err)
 	}
-	fmt.Println(response)
+}
+
+func formatInfluxPayload(cityWeather CityWeather) string {
+	payload := "openweathermap," + "city=" + fmt.Sprint(cityWeather.Name) + " temperature=" + fmt.Sprint(cityWeather.Data.Temp) + ",pressure=" + fmt.Sprint(cityWeather.Data.Pressure) + ",humidity=" + fmt.Sprint(cityWeather.Data.Humidity)
+	return payload
 }
 
 func main() {
@@ -72,11 +93,13 @@ func main() {
 
 	webserver := http.NewServeMux()
 	cityWeather := getCityTemperature(openweatherApiKey, openweatherApi, city)
-	postToInflux(cityWeather, influxDbAddress)
+	payload := formatInfluxPayload(cityWeather)
+	postToInflux(payload, influxDbAddress)
 	tick := time.Tick(60 * time.Minute)
 	for range tick {
 		cityWeather := getCityTemperature(openweatherApiKey, openweatherApi, city)
-		postToInflux(cityWeather, influxDbAddress)
+		payload := formatInfluxPayload(cityWeather)
+		postToInflux(payload, influxDbAddress)
 	}
 	err := http.ListenAndServe(":4001", webserver)
 	log.Fatal(err)
